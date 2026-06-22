@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Domain Join & Incremental GPO Hardening Guide</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap');
+
+:root {
+  --ink:        #0f1923;
+  --ink-soft:   #3a4a58;
+  --ink-muted:  #6b7f8e;
+  --rule:       #d0dae3;
+  --bg:         #f4f7fa;
+  --surface:    #ffffff;
+  --surface2:   #edf2f7;
+  --blue:       #0055cc;
+  --blue-light: #dbeafe;
+  --blue-mid:   #1e6fbd;
+  --green:      #0a7c45;
+  --green-light:#dcfce7;
+  --amber:      #b45309;
+  --amber-light:#fef3c7;
+  --red:        #b91c1c;
+  --red-light:  #fee2e2;
+  --mono:       'IBM Plex Mono', monospace;
+  --sans:       'IBM Plex Sans', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.masthead {
+  background: var(--ink);
+  color: #fff;
+  padding: 48px 56px 40px;
+  position: relative;
+  overflow: hidden;
+}
+.masthead::before {
+  content: '';
+  position: absolute;
+  top: -60px; right: -60px;
+  width: 320px; height: 320px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,85,204,.35) 0%, transparent 70%);
+  pointer-events: none;
+}
+.masthead-eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #64a0e4;
+  margin-bottom: 12px;
+}
+.masthead h1 {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.25;
+  max-width: 680px;
+  margin-bottom: 16px;
+}
+.masthead-desc {
+  font-size: 14px;
+  color: #a8bfd4;
+  max-width: 600px;
+  line-height: 1.6;
+}
+.phase-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 28px;
+}
+.phase-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.phase-pill .num {
+  background: var(--blue);
+  color: #fff;
+  font-weight: 600;
+  width: 20px; height: 20px;
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.body-wrap {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 40px 32px 64px;
+}
+
+/* ── Phase blocks ────────────────────────────────────────────────────────── */
+.phase {
+  margin-bottom: 56px;
+}
+.phase-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 2px solid var(--rule);
+}
+.phase-number {
+  flex-shrink: 0;
+  width: 48px; height: 48px;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 600;
+}
+.phase-title { font-size: 20px; font-weight: 700; line-height: 1.2; margin-bottom: 4px; }
+.phase-subtitle { font-size: 13px; color: var(--ink-muted); }
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+.tabs-wrap { margin-bottom: 0; }
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--rule);
+  margin-bottom: 0;
+}
+.tab-btn {
+  padding: 9px 20px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .5px;
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+.tab-btn:hover { color: var(--blue); }
+.tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+.tab-panel {
+  display: none;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  padding: 28px;
+}
+.tab-panel.active { display: block; }
+
+/* ── Steps ───────────────────────────────────────────────────────────────── */
+.steps { display: flex; flex-direction: column; gap: 16px; }
+.step {
+  display: flex;
+  gap: 16px;
+}
+.step-num {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  background: var(--blue-light);
+  color: var(--blue);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.step-body { flex: 1; }
+.step-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.step-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.65; }
+
+/* ── Code blocks ─────────────────────────────────────────────────────────── */
+pre {
+  background: #0f1923;
+  color: #c8d8e8;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.65;
+  padding: 18px 20px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.c  { color: #4e7a99; }   /* comment */
+.s  { color: #85c17e; }   /* string */
+.k  { color: #c586c0; }   /* keyword */
+.v  { color: #e5c07b; }   /* variable */
+.f  { color: #61afef; }   /* function/cmdlet */
+.n  { color: #e06c75; }   /* number/value */
+
+code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface2);
+  color: var(--red);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* ── Path box ────────────────────────────────────────────────────────────── */
+.nav-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface2);
+  border-left: 3px solid var(--blue);
+  padding: 8px 12px;
+  border-radius: 0 4px 4px 0;
+  color: var(--ink);
+  display: block;
+  margin: 8px 0;
+}
+
+/* ── Callouts ────────────────────────────────────────────────────────────── */
+.callout {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 14px 0;
+}
+.callout .icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+.callout strong { display: block; margin-bottom: 2px; font-size: 13px; }
+.info    { background: var(--blue-light);  border-left: 4px solid var(--blue); }
+.warning { background: var(--amber-light); border-left: 4px solid var(--amber); }
+.danger  { background: var(--red-light);   border-left: 4px solid var(--red); }
+.success { background: var(--green-light); border-left: 4px solid var(--green); }
+
+/* ── Policy group cards ──────────────────────────────────────────────────── */
+.policy-groups { display: flex; flex-direction: column; gap: 24px; }
+
+.pg {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pg-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--rule);
+}
+.pg-badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  white-space: nowrap;
+}
+.risk-vlow  { background: var(--green-light);  color: var(--green); }
+.risk-low   { background: #dcfce7;             color: #166534; }
+.risk-med   { background: var(--amber-light);  color: var(--amber); }
+.risk-high  { background: var(--red-light);    color: var(--red); }
+
+.pg-title { font-weight: 700; font-size: 14px; }
+.pg-subtitle { font-size: 12px; color: var(--ink-muted); margin-top: 1px; }
+
+.pg-body { padding: 0 20px 16px; }
+
+.policy-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: 12px 0 8px;
+}
+.policy-table th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--ink-muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+}
+.policy-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--surface2);
+  vertical-align: top;
+}
+.policy-table tr:last-child td { border-bottom: none; }
+
+.test-block {
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.test-block strong { display: block; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-muted); }
+
+.cmd-block {
+  background: var(--ink);
+  border-radius: 6px;
+  margin: 12px 0 0;
+  overflow: hidden;
+}
+.cmd-label {
+  background: rgba(255,255,255,.07);
+  padding: 5px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #64a0e4;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+}
+.cmd-block pre {
+  border-radius: 0;
+  margin: 0;
+  padding: 14px 16px;
+}
+
+.reboot-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--amber-light);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-top: 10px;
+}
+
+/* ── Checkpoint ──────────────────────────────────────────────────────────── */
+.checkpoint {
+  background: var(--green-light);
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 24px 0;
+}
+.checkpoint .ck-icon { font-size: 22px; flex-shrink: 0; }
+.checkpoint .ck-title { font-weight: 700; font-size: 14px; color: var(--green); margin-bottom: 4px; }
+.checkpoint .ck-body { font-size: 13px; color: #166534; line-height: 1.6; }
+
+/* ── Rollback block ──────────────────────────────────────────────────────── */
+.rollback {
+  background: var(--red-light);
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--red);
+  margin-top: 8px;
+}
+.rollback strong { display: block; margin-bottom: 4px; }
+
+footer {
+  text-align: center;
+  padding: 28px;
+  font-size: 12px;
+  color: var(--ink-muted);
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+}
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="masthead-eyebrow">Active Directory // GPO Hardening</div>
+  <h1>Domain Join &amp; Incremental Cryptography Policy Guide</h1>
+  <p class="masthead-desc">
+    Step-by-step procedure for joining a standalone workstation to the domain, isolating it in its own OU,
+    disabling the FIPS flag at the OU level, and incrementally applying compensating cryptography
+    policies with software testing checkpoints after each group.
+  </p>
+  <div class="phase-pills">
+    <div class="phase-pill"><div class="num">1</div> Join Domain</div>
+    <div class="phase-pill"><div class="num">2</div> Create OU &amp; Link GPO</div>
+    <div class="phase-pill"><div class="num">3</div> Disable FIPS in OU</div>
+    <div class="phase-pill"><div class="num">4</div> Incremental Policy Rollout</div>
+  </div>
+</div>
+
+<div class="body-wrap">
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 1                                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="phase">
+  <div class="phase-header">
+    <div class="phase-number">1</div>
+    <div>
+      <div class="phase-title">Join the Workstation to the Domain</div>
+      <div class="phase-subtitle">Performed on the workstation itself — requires local admin and domain credentials</div>
+    </div>
+  </div>
+
+  <div class="callout warning">
+    <div class="icon">⚠️</div>
+    <div><strong>Before you begin</strong>
+    Confirm DNS on the workstation is pointing to the Domain Controller. If the workstation cannot resolve the domain name, the join will fail regardless of credentials. Run <code>nslookup corp.example.com</code> to verify.</div>
+  </div>
+
+  <div class="tabs-wrap">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab(this,'p1-gui')">🖥  GUI</button>
+      <button class="tab-btn" onclick="switchTab(this,'p1-cli')">⌨  PowerShell</button>
+    </div>
+
+    <div id="p1-gui" class="tab-panel active">
+      <div class="steps">
+        <div class="step"><div class="step-num">1</div><div class="step-body">
+          <div class="step-title">Open System Properties</div>
+          <div class="step-desc">Press <strong>Win + R</strong> → type <code>sysdm.cpl</code> → Enter. Or: right-click <em>This PC</em> → <strong>Properties</strong> → <strong>Change settings</strong>.</div>
+        </div></div>
+        <div class="step"><div class="step-num">2</div><div class="step-body">
+          <div class="step-title">Click Change</div>
+          <div class="step-desc">On the <strong>Computer Name</strong> tab click <strong>Change…</strong></div>
+        </div></div>
+        <div class="step"><div class="step-num">3</div><div class="step-body">
+          <div class="step-title">Select Domain and enter the domain name</div>
+          <div class="step-desc">Under <em>Member of</em>, select <strong>Domain</strong> and type your domain FQDN (e.g. <code>corp.example.com</code>). Click <strong>OK</strong>.</div>
+        </div></div>
+        <div class="step"><div class="step-num">4</div><div class="step-body">
+          <div class="step-title">Enter domain credentials</div>
+          <div class="step-desc">When prompted, enter a domain account that has permission to join computers (e.g. <code>corp\administrator</code>). Click <strong>OK</strong>.</div>
+        </div></div>
+        <div class="step"><div class="step-num">5</div><div class="step-body">
+          <div class="step-title">Restart when prompted</div>
+          <div class="step-desc">Click <strong>OK</strong> through the welcome dialog, then <strong>Close</strong>, then <strong>Restart Now</strong>. The workstation will reboot and appear in the <strong>Computers</strong> container in ADUC.</div>
+        </div></div>
+      </div>
+    </div>
+
+    <div id="p1-cli" class="tab-panel">
+      <div class="callout info">
+        <div class="icon">ℹ️</div>
+        <div>Run from an <strong>elevated PowerShell session on the workstation</strong>. Adjust the variables at the top before running.</div>
+      </div>
+      <div class="cmd-block">
+        <div class="cmd-label">PowerShell — Run on Workstation</div>
+        <pre><span class="c"># ── Variables ────────────────────────────────────────────────────────────────</span>
+<span class="v">$domain</span>     = <span class="s">"corp.example.com"</span>
+<span class="v">$ouPath</span>     = <span class="s">"OU=Computers,DC=corp,DC=example,DC=com"</span>  <span class="c"># initial landing OU (optional)</span>
+<span class="v">$credential</span> = <span class="f">Get-Credential</span> <span class="s">"corp\administrator"</span>         <span class="c"># prompts for password</span>
+
+<span class="c"># ── Verify DNS resolves the domain before attempting join ─────────────────────</span>
+<span class="k">try</span> {
+    <span class="f">Resolve-DnsName</span> <span class="v">$domain</span> <span class="k">-ErrorAction</span> Stop | <span class="f">Out-Null</span>
+    <span class="f">Write-Host</span> <span class="s">"✔ DNS resolution OK for </span><span class="v">$domain</span><span class="s">"</span> -ForegroundColor Green
+} <span class="k">catch</span> {
+    <span class="f">Write-Error</span> <span class="s">"DNS cannot resolve </span><span class="v">$domain</span><span class="s">. Fix DNS before joining."</span>; <span class="k">exit</span> 1
+}
+
+<span class="c"># ── Join the domain ───────────────────────────────────────────────────────────</span>
+<span class="f">Add-Computer</span> `
+    -DomainName   <span class="v">$domain</span> `
+    -Credential   <span class="v">$credential</span> `
+    -OUPath       <span class="v">$ouPath</span> `     <span class="c"># omit this line to land in default Computers container</span>
+    -Restart:$false `
+    -Force
+
+<span class="f">Write-Host</span> <span class="s">"✔ Domain join complete. Rebooting in 10 seconds..."</span> -ForegroundColor Green
+<span class="f">Start-Sleep</span> 10
+<span class="f">Restart-Computer</span> -Force</pre>
+      </div>
+      <div class="callout warning">
+        <div class="icon">⚠️</div>
+        <div>The <code>-OUPath</code> parameter places the computer directly into a target OU on join. If the FIPS-Exempt OU doesn't exist yet (it won't until Phase 2), omit that line — the computer lands in the default <strong>Computers</strong> container and you move it in Phase 2.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 2                                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="phase">
+  <div class="phase-header">
+    <div class="phase-number">2</div>
+    <div>
+      <div class="phase-title">Create the OU, Copy Domain GPO, and Link to OU</div>
+      <div class="phase-subtitle">Performed on the Domain Controller — requires Domain Admin or delegated GPO rights</div>
+    </div>
+  </div>
+
+  <div class="tabs-wrap">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab(this,'p2-gui')">🖥  GUI (ADUC + GPMC)</button>
+      <button class="tab-btn" onclick="switchTab(this,'p2-cli')">⌨  PowerShell</button>
+    </div>
+
+    <div id="p2-gui" class="tab-panel active">
+      <h3 style="font-size:14px;font-weight:700;margin-bottom:14px;">Part A — Create the OU and move the workstation (ADUC)</h3>
+      <div class="steps">
+        <div class="step"><div class="step-num">1</div><div class="step-body">
+          <div class="step-title">Open Active Directory Users and Computers</div>
+          <div class="step-desc"><strong>Win + R</strong> → <code>dsa.msc</code></div>
+        </div></div>
+        <div class="step"><div class="step-num">2</div><div class="step-body">
+          <div class="step-title">Create the new OU</div>
+          <div class="step-desc">Right-click your domain root (or an existing parent OU) → <strong>New → Organizational Unit</strong>. Name it <code>FIPS-Exempt-Workstations</code>. Check <strong>Protect container from accidental deletion</strong>. Click <strong>OK</strong>.</div>
+        </div></div>
+        <div class="step"><div class="step-num">3</div><div class="step-body">
+          <div class="step-title">Move the workstation into the new OU</div>
+          <div class="step-desc">In the <strong>Computers</strong> container (or wherever the workstation landed), right-click the computer object → <strong>Move…</strong> → select <code>FIPS-Exempt-Workstations</code> → <strong>OK</strong>.</div>
+        </div></div>
+      </div>
+
+      <h3 style="font-size:14px;font-weight:700;margin:24px 0 14px;">Part B — Copy GPO and link to OU (GPMC)</h3>
+      <div class="steps">
+        <div class="step"><div class="step-num">4</div><div class="step-body">
+          <div class="step-title">Open Group Policy Management Console</div>
+          <div class="step-desc"><strong>Win + R</strong> → <code>gpmc.msc</code></div>
+        </div></div>
+        <div class="step"><div class="step-num">5</div><div class="step-body">
+          <div class="step-title">Copy the source domain GPO</div>
+          <div class="step-desc">Navigate to <strong>Group Policy Objects</strong>. Right-click the GPO you want to use as your baseline (e.g. <em>Default Domain Security Policy</em>) → <strong>Copy</strong>. Right-click <strong>Group Policy Objects</strong> → <strong>Paste</strong>. Name the new copy <code>FIPS-Exempt-Workstation-Policy</code>. Select <strong>Preserve existing permissions</strong>.</div>
+        </div></div>
+        <div class="step"><div class="step-num">6</div><div class="step-body">
+          <div class="step-title">Link the new GPO to the workstation OU</div>
+          <div class="step-desc">Right-click <code>FIPS-Exempt-Workstations</code> in the tree → <strong>Link an Existing GPO…</strong> → select <code>FIPS-Exempt-Workstation-Policy</code> → <strong>OK</strong>.</div>
+        </div></div>
+        <div class="step"><div class="step-num">7</div><div class="step-body">
+          <div class="step-title">Check inheritance and enforce if needed</div>
+          <div class="step-desc">Click the OU → <strong>Group Policy Inheritance</strong> tab. If a parent GPO is enforcing FIPS and will override your new OU policy, right-click the link for your new GPO → <strong>Enforced</strong> to ensure the OU-level setting wins.</div>
+        </div></div>
+      </div>
+    </div>
+
+    <div id="p2-cli" class="tab-panel">
+      <div class="cmd-block">
+        <div class="cmd-label">PowerShell — Run on Domain Controller</div>
+        <pre><span class="f">Import-Module</span> ActiveDirectory
+<span class="f">Import-Module</span> GroupPolicy
+
+<span class="c"># ── Variables — adjust to your environment ───────────────────────────────────</span>
+<span class="v">$ouName</span>        = <span class="s">"FIPS-Exempt-Workstations"</span>
+<span class="v">$parentOU</span>      = <span class="s">"OU=Workstations,DC=corp,DC=example,DC=com"</span>
+<span class="v">$workstation</span>   = <span class="s">"DESKTOP-EXEMPT01"</span>        <span class="c"># computer name (no $)</span>
+<span class="v">$sourceGPO</span>     = <span class="s">"Default Domain Security Policy"</span>
+<span class="v">$newGPOName</span>    = <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+
+<span class="c"># ── Step 1: Create the OU ─────────────────────────────────────────────────────</span>
+<span class="f">New-ADOrganizationalUnit</span> `
+    -Name        <span class="v">$ouName</span> `
+    -Path        <span class="v">$parentOU</span> `
+    -Description <span class="s">"Workstations exempt from FIPS — compensating controls applied"</span> `
+    -ProtectedFromAccidentalDeletion <span class="v">$true</span>
+
+<span class="v">$ouDN</span> = <span class="s">"OU=</span><span class="v">$ouName</span><span class="s">,</span><span class="v">$parentOU</span><span class="s">"</span>
+<span class="f">Write-Host</span> <span class="s">"✔ OU created: </span><span class="v">$ouDN</span><span class="s">"</span> -ForegroundColor Green
+
+<span class="c"># ── Step 2: Move the workstation computer object into the new OU ──────────────</span>
+<span class="v">$computer</span> = <span class="f">Get-ADComputer</span> -Identity <span class="v">$workstation</span>
+<span class="f">Move-ADObject</span> -Identity <span class="v">$computer.DistinguishedName</span> -TargetPath <span class="v">$ouDN</span>
+<span class="f">Write-Host</span> <span class="s">"✔ </span><span class="v">$workstation</span><span class="s"> moved to </span><span class="v">$ouDN</span><span class="s">"</span> -ForegroundColor Green
+
+<span class="c"># ── Step 3: Copy the domain GPO ───────────────────────────────────────────────</span>
+<span class="v">$srcGPO</span> = <span class="f">Get-GPO</span> -Name <span class="v">$sourceGPO</span>
+<span class="v">$newGPO</span> = <span class="f">Copy-GPO</span> -SourceGuid <span class="v">$srcGPO.Id</span> -TargetName <span class="v">$newGPOName</span>
+<span class="f">Write-Host</span> <span class="s">"✔ GPO copied. New GUID: </span><span class="v">$($newGPO.Id)</span><span class="s">"</span> -ForegroundColor Green
+
+<span class="c"># ── Step 4: Link the GPO to the new OU ───────────────────────────────────────</span>
+<span class="f">New-GPLink</span> -Name <span class="v">$newGPOName</span> -Target <span class="v">$ouDN</span> -LinkEnabled Yes -Enforced No
+<span class="f">Write-Host</span> <span class="s">"✔ GPO linked to OU."</span> -ForegroundColor Green
+
+<span class="c"># ── Step 5: Verify ───────────────────────────────────────────────────────────</span>
+<span class="f">Get-GPInheritance</span> -Target <span class="v">$ouDN</span> | <span class="f">Select-Object</span> -ExpandProperty GpoLinks</pre>
+      </div>
+      <div class="callout warning">
+        <div class="icon">⚠️</div>
+        <div>If a parent GPO has <strong>Enforced</strong> set, your OU-level GPO will be overridden. To enforce your new GPO: <code>Set-GPLink -Name $newGPOName -Target $ouDN -Enforced Yes</code></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 3                                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="phase">
+  <div class="phase-header">
+    <div class="phase-number">3</div>
+    <div>
+      <div class="phase-title">Disable the FIPS Flag in the OU GPO</div>
+      <div class="phase-subtitle">Performed on the Domain Controller — sets FIPS = Disabled only for the workstation OU</div>
+    </div>
+  </div>
+
+  <div class="callout danger">
+    <div class="icon">🚨</div>
+    <div><strong>Test immediately after this phase</strong>
+    Before applying any cryptography policies (Phase 4), reboot the workstation, run <code>gpupdate /force</code>, and confirm the problem software works with FIPS disabled but no other changes applied yet. This establishes a clean baseline.</div>
+  </div>
+
+  <div class="tabs-wrap">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab(this,'p3-gui')">🖥  GUI (GPME)</button>
+      <button class="tab-btn" onclick="switchTab(this,'p3-cli')">⌨  PowerShell</button>
+    </div>
+
+    <div id="p3-gui" class="tab-panel active">
+      <div class="steps">
+        <div class="step"><div class="step-num">1</div><div class="step-body">
+          <div class="step-title">Open the GPO for editing</div>
+          <div class="step-desc">In GPMC, right-click <code>FIPS-Exempt-Workstation-Policy</code> → <strong>Edit…</strong></div>
+        </div></div>
+        <div class="step"><div class="step-num">2</div><div class="step-body">
+          <div class="step-title">Navigate to Security Options</div>
+          <div class="step-desc"><span class="nav-path">Computer Configuration → Windows Settings → Security Settings → Local Policies → Security Options</span></div>
+        </div></div>
+        <div class="step"><div class="step-num">3</div><div class="step-body">
+          <div class="step-title">Disable the FIPS policy</div>
+          <div class="step-desc">Scroll to <strong>"System cryptography: Use FIPS compliant algorithms for encryption, hashing, and signing"</strong>. Double-click → check <strong>Define this policy setting</strong> → select <strong>Disabled</strong> → <strong>OK</strong>.</div>
+        </div></div>
+        <div class="step"><div class="step-num">4</div><div class="step-body">
+          <div class="step-title">Add belt-and-suspenders registry preference</div>
+          <div class="step-desc">
+            Navigate to:
+            <span class="nav-path">Computer Configuration → Preferences → Windows Settings → Registry</span>
+            Right-click → <strong>New → Registry Item</strong>:
+            <ul style="margin: 8px 0 0 16px; font-size: 13px; line-height: 2;">
+              <li><strong>Action:</strong> Update</li>
+              <li><strong>Hive:</strong> HKEY_LOCAL_MACHINE</li>
+              <li><strong>Key Path:</strong> <code>SYSTEM\CurrentControlSet\Control\Lsa\FipsAlgorithmPolicy</code></li>
+              <li><strong>Value name:</strong> <code>Enabled</code> &nbsp;|&nbsp; <strong>Type:</strong> REG_DWORD &nbsp;|&nbsp; <strong>Data:</strong> <code>0</code></li>
+            </ul>
+          </div>
+        </div></div>
+        <div class="step"><div class="step-num">5</div><div class="step-body">
+          <div class="step-title">Force policy refresh on the workstation</div>
+          <div class="step-desc">On the workstation, open an elevated command prompt and run: <code>gpupdate /force</code> then reboot. Verify FIPS is off: <code>reg query HKLM\SYSTEM\CurrentControlSet\Control\Lsa\FipsAlgorithmPolicy /v Enabled</code> — value should be <code>0x0</code>.</div>
+        </div></div>
+      </div>
+    </div>
+
+    <div id="p3-cli" class="tab-panel">
+      <div class="cmd-block">
+        <div class="cmd-label">PowerShell — Run on Domain Controller</div>
+        <pre><span class="v">$gpoName</span> = <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+<span class="v">$gpo</span>     = <span class="f">Get-GPO</span> -Name <span class="v">$gpoName</span>
+
+<span class="c"># ── Method 1: GPO Registry Preference (Preferences node) ─────────────────────</span>
+<span class="f">Set-GPRegistryValue</span> `
+    -Guid      <span class="v">$gpo.Id</span> `
+    -Key       <span class="s">"HKLM\SYSTEM\CurrentControlSet\Control\Lsa\FipsAlgorithmPolicy"</span> `
+    -ValueName <span class="s">"Enabled"</span> `
+    -Type      DWord `
+    -Value     <span class="n">0</span>
+
+<span class="c"># ── Method 2: Security Options INF (makes it appear in secpol.msc on workstation)</span>
+<span class="v">$domain</span>     = <span class="s">"corp.example.com"</span>
+<span class="v">$sysvolPath</span> = <span class="s">"\\</span><span class="v">$domain</span><span class="s">\SYSVOL\</span><span class="v">$domain</span><span class="s">\Policies\{</span><span class="v">$($gpo.Id)</span><span class="s">}\Machine\Microsoft\Windows NT\SecEdit"</span>
+
+<span class="k">if</span> (-not (<span class="f">Test-Path</span> <span class="v">$sysvolPath</span>)) { <span class="f">New-Item</span> <span class="v">$sysvolPath</span> -ItemType Directory | <span class="f">Out-Null</span> }
+
+<span class="v">$inf</span> = <span class="s">@"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`</span><span class="v">$CHICAGO</span><span class="s">`$"
+Revision=1
+[System Access]
+[Registry Values]
+MACHINE\System\CurrentControlSet\Control\Lsa\FIPSAlgorithmPolicy\Enabled=4,0
+"@</span>
+<span class="f">Set-Content</span> -Path <span class="s">"</span><span class="v">$sysvolPath</span><span class="s">\GptTmpl.inf"</span> -Value <span class="v">$inf</span> -Encoding Unicode
+<span class="f">Write-Host</span> <span class="s">"✔ FIPS disabled in GPO."</span> -ForegroundColor Green
+
+<span class="c"># ── On the workstation: force GPO refresh ────────────────────────────────────</span>
+<span class="c"># Run this on the workstation after the above runs on the DC:</span>
+<span class="c"># gpupdate /force</span>
+<span class="c"># Restart-Computer -Force</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="checkpoint">
+    <div class="ck-icon">✅</div>
+    <div>
+      <div class="ck-title">CHECKPOINT — Verify software works before Phase 4</div>
+      <div class="ck-body">Reboot the workstation, run <code>gpupdate /force</code>, and test the problem software thoroughly. It should now work with FIPS disabled and no other policy changes. <strong>Do not proceed to Phase 4 until this checkpoint passes.</strong> If the software still fails here, the issue is not solely the FIPS flag and further investigation is needed.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- PHASE 4                                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="phase">
+  <div class="phase-header">
+    <div class="phase-number">4</div>
+    <div>
+      <div class="phase-title">Incremental Cryptography Policy Rollout</div>
+      <div class="phase-subtitle">Apply each group to the GPO on the DC — reboot workstation and test after every group</div>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <div class="icon">ℹ️</div>
+    <div><strong>How this phase works</strong>
+    Each group below is applied by running its PowerShell block on the <strong>Domain Controller</strong> to update the GPO. Then run <code>gpupdate /force</code> and reboot the <strong>workstation</strong>. Test the software. If it passes, move to the next group. If it breaks, use the rollback command shown in that group to remove just those settings.</div>
+  </div>
+
+  <div class="policy-groups">
+
+    <!-- GROUP A -->
+    <div class="pg">
+      <div class="pg-header">
+        <div>
+          <div class="pg-title">Group A — AES &amp; SHA384 (Additive Only)</div>
+          <div class="pg-subtitle">Explicitly enables strong algorithms — adds nothing new to block</div>
+        </div>
+        <div style="margin-left:auto"><span class="pg-badge risk-vlow">Very Low Risk</span></div>
+      </div>
+      <div class="pg-body">
+        <table class="policy-table">
+          <thead><tr><th>Setting</th><th>Value</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>AES 128/128 Cipher</td><td>Enabled = 1</td><td>Guarantees AES is available after legacy ciphers are removed</td></tr>
+            <tr><td>AES 256/256 Cipher</td><td>Enabled = 1</td><td>Strongest FIPS-approved symmetric cipher — must be explicit</td></tr>
+            <tr><td>SHA384 Hash</td><td>Enabled = 1</td><td>Completes the SHA-2 family alongside SHA256/SHA512</td></tr>
+          </tbody>
+        </table>
+        <div class="cmd-block">
+          <div class="cmd-label">PowerShell — Run on DC</div>
+          <pre><span class="v">$gpo</span>  = <span class="f">Get-GPO</span> -Name <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+<span class="v">$base</span> = <span class="s">"HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL"</span>
+
+<span class="k">foreach</span> (<span class="v">$aes</span> <span class="k">in</span> @(<span class="s">"AES 128/128"</span>, <span class="s">"AES 256/256"</span>)) {
+    <span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="s">"</span><span class="v">$base</span><span class="s">\Ciphers\</span><span class="v">$aes</span><span class="s">"</span> -ValueName <span class="s">"Enabled"</span> -Type DWord -Value <span class="n">1</span>
+}
+<span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="s">"</span><span class="v">$base</span><span class="s">\Hashes\SHA384"</span> -ValueName <span class="s">"Enabled"</span> -Type DWord -Value <span class="n">1</span>
+<span class="f">Write-Host</span> <span class="s">"✔ Group A applied."</span> -ForegroundColor Green</pre>
+        </div>
+        <div class="rollback">
+          <strong>🔄 Rollback (if software breaks after this group)</strong>
+          <code>$gpo = Get-GPO -Name "FIPS-Exempt-Workstation-Policy"</code><br>
+          <code>foreach ($aes in @("AES 128/128","AES 256/256")) { Remove-GPRegistryValue -Guid $gpo.Id -Key "HKLM\...\Ciphers\$aes" -ValueName "Enabled" }</code><br>
+          <code>Remove-GPRegistryValue -Guid $gpo.Id -Key "HKLM\...\Hashes\SHA384" -ValueName "Enabled"</code>
+        </div>
+        <div class="reboot-badge">⟳ Reboot workstation &amp; test after applying</div>
+      </div>
+    </div>
+
+    <!-- GROUP B -->
+    <div class="pg">
+      <div class="pg-header">
+        <div>
+          <div class="pg-title">Group B — DisabledByDefault Keys for Legacy Protocols</div>
+          <div class="pg-subtitle">Belt-and-suspenders for protocols already set Enabled=0 in the baseline</div>
+        </div>
+        <div style="margin-left:auto"><span class="pg-badge risk-vlow">Very Low Risk</span></div>
+      </div>
+      <div class="pg-body">
+        <table class="policy-table">
+          <thead><tr><th>Protocol / Role</th><th>Value</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>SSL 2.0 Server &amp; Client</td><td>DisabledByDefault = 1</td><td rowspan="5" style="vertical-align:middle">Some runtimes check only this key, not Enabled. Belt-and-suspenders alongside Enabled=0.</td></tr>
+            <tr><td>SSL 3.0 Server &amp; Client</td><td>DisabledByDefault = 1</td></tr>
+            <tr><td>TLS 1.0 Server &amp; Client</td><td>DisabledByDefault = 1</td></tr>
+            <tr><td>TLS 1.1 Server &amp; Client</td><td>DisabledByDefault = 1</td></tr>
+            <tr><td>TLS 1.2 Server &amp; Client</td><td>DisabledByDefault = 0</td></tr>
+          </tbody>
+        </table>
+        <div class="cmd-block">
+          <div class="cmd-label">PowerShell — Run on DC</div>
+          <pre><span class="v">$gpo</span>  = <span class="f">Get-GPO</span> -Name <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+<span class="v">$base</span> = <span class="s">"HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL"</span>
+
+<span class="k">foreach</span> (<span class="v">$p</span> <span class="k">in</span> @(<span class="s">"SSL 2.0"</span>,<span class="s">"SSL 3.0"</span>,<span class="s">"TLS 1.0"</span>,<span class="s">"TLS 1.1"</span>)) {
+    <span class="k">foreach</span> (<span class="v">$r</span> <span class="k">in</span> @(<span class="s">"Server"</span>,<span class="s">"Client"</span>)) {
+        <span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="s">"</span><span class="v">$base</span><span class="s">\Protocols\</span><span class="v">$p</span><span class="s">\</span><span class="v">$r</span><span class="s">"</span> -ValueName <span class="s">"DisabledByDefault"</span> -Type DWord -Value <span class="n">1</span>
+    }
+}
+<span class="k">foreach</span> (<span class="v">$r</span> <span class="k">in</span> @(<span class="s">"Server"</span>,<span class="s">"Client"</span>)) {
+    <span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="s">"</span><span class="v">$base</span><span class="s">\Protocols\TLS 1.2\</span><span class="v">$r</span><span class="s">"</span> -ValueName <span class="s">"DisabledByDefault"</span> -Type DWord -Value <span class="n">0</span>
+}
+<span class="f">Write-Host</span> <span class="s">"✔ Group B applied."</span> -ForegroundColor Green</pre>
+        </div>
+        <div class="rollback">
+          <strong>🔄 Rollback</strong>
+          <code>foreach ($p in @("SSL 2.0","SSL 3.0","TLS 1.0","TLS 1.1","TLS 1.2")) { foreach ($r in @("Server","Client")) { Remove-GPRegistryValue -Guid $gpo.Id -Key "HKLM\...\Protocols\$p\$r" -ValueName "DisabledByDefault" } }</code>
+        </div>
+        <div class="reboot-badge">⟳ Reboot workstation &amp; test after applying</div>
+      </div>
+    </div>
+
+    <!-- GROUP C -->
+    <div class="pg">
+      <div class="pg-header">
+        <div>
+          <div class="pg-title">Group C — Enable TLS 1.3</div>
+          <div class="pg-subtitle">Adds the strongest available protocol; ignored on unsupported OS versions</div>
+        </div>
+        <div style="margin-left:auto"><span class="pg-badge risk-low">Low Risk</span></div>
+      </div>
+      <div class="pg-body">
+        <table class="policy-table">
+          <thead><tr><th>Setting</th><th>Value</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>TLS 1.3 Server</td><td>Enabled = 1, DisabledByDefault = 0</td><td>Requires Windows 10 1903+ or Server 2022. Silently ignored on older OS.</td></tr>
+            <tr><td>TLS 1.3 Client</td><td>Enabled = 1, DisabledByDefault = 0</td><td>Test all outbound connections the application makes after applying.</td></tr>
+          </tbody>
+        </table>
+        <div class="cmd-block">
+          <div class="cmd-label">PowerShell — Run on DC</div>
+          <pre><span class="v">$gpo</span>  = <span class="f">Get-GPO</span> -Name <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+<span class="v">$base</span> = <span class="s">"HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL"</span>
+
+<span class="k">foreach</span> (<span class="v">$r</span> <span class="k">in</span> @(<span class="s">"Server"</span>,<span class="s">"Client"</span>)) {
+    <span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="s">"</span><span class="v">$base</span><span class="s">\Protocols\TLS 1.3\</span><span class="v">$r</span><span class="s">"</span> -ValueName <span class="s">"Enabled"</span>          -Type DWord -Value <span class="n">1</span>
+    <span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="s">"</span><span class="v">$base</span><span class="s">\Protocols\TLS 1.3\</span><span class="v">$r</span><span class="s">"</span> -ValueName <span class="s">"DisabledByDefault"</span> -Type DWord -Value <span class="n">0</span>
+}
+<span class="f">Write-Host</span> <span class="s">"✔ Group C applied."</span> -ForegroundColor Green</pre>
+        </div>
+        <div class="rollback">
+          <strong>🔄 Rollback</strong>
+          <code>foreach ($r in @("Server","Client")) { Remove-GPRegistryValue -Guid $gpo.Id -Key "HKLM\...\Protocols\TLS 1.3\$r" -ValueName "Enabled"; Remove-GPRegistryValue ... -ValueName "DisabledByDefault" }</code>
+        </div>
+        <div class="reboot-badge">⟳ Reboot workstation &amp; test after applying</div>
+      </div>
+    </div>
+
+    <!-- GROUP D -->
+    <div class="pg">
+      <div class="pg-header">
+        <div>
+          <div class="pg-title">Group D — Disable RC2 Cipher Family</div>
+          <div class="pg-subtitle">Removes legacy RC2 variants not covered in the original script</div>
+        </div>
+        <div style="margin-left:auto"><span class="pg-badge risk-med">Medium Risk</span></div>
+      </div>
+      <div class="pg-body">
+        <div class="callout warning">
+          <div class="icon">⚠️</div>
+          <div>RC2 is rare but may be used by custom or embedded components. Test any legacy integrations — COM objects, third-party DLLs, ODBC drivers — after this group.</div>
+        </div>
+        <table class="policy-table">
+          <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>RC2 128/128 Cipher</td><td>Enabled = 0</td></tr>
+            <tr><td>RC2 56/128 Cipher</td><td>Enabled = 0</td></tr>
+            <tr><td>RC2 40/128 Cipher</td><td>Enabled = 0</td></tr>
+          </tbody>
+        </table>
+        <div class="cmd-block">
+          <div class="cmd-label">PowerShell — Run on DC</div>
+          <pre><span class="v">$gpo</span>  = <span class="f">Get-GPO</span> -Name <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+<span class="v">$base</span> = <span class="s">"HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL"</span>
+
+<span class="k">foreach</span> (<span class="v">$rc2</span> <span class="k">in</span> @(<span class="s">"RC2 128/128"</span>, <span class="s">"RC2 56/128"</span>, <span class="s">"RC2 40/128"</span>)) {
+    <span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="s">"</span><span class="v">$base</span><span class="s">\Ciphers\</span><span class="v">$rc2</span><span class="s">"</span> -ValueName <span class="s">"Enabled"</span> -Type DWord -Value <span class="n">0</span>
+}
+<span class="f">Write-Host</span> <span class="s">"✔ Group D applied."</span> -ForegroundColor Green</pre>
+        </div>
+        <div class="rollback">
+          <strong>🔄 Rollback</strong>
+          <code>foreach ($rc2 in @("RC2 128/128","RC2 56/128","RC2 40/128")) { Remove-GPRegistryValue -Guid $gpo.Id -Key "HKLM\...\Ciphers\$rc2" -ValueName "Enabled" }</code>
+        </div>
+        <div class="reboot-badge">⟳ Reboot workstation &amp; test after applying</div>
+      </div>
+    </div>
+
+    <!-- GROUP E -->
+    <div class="pg">
+      <div class="pg-header">
+        <div>
+          <div class="pg-title">Group E — Minimum DH Key Size (2048-bit)</div>
+          <div class="pg-subtitle">Prevents Logjam-style weak key negotiation</div>
+        </div>
+        <div style="margin-left:auto"><span class="pg-badge risk-med">Medium Risk</span></div>
+      </div>
+      <div class="pg-body">
+        <div class="callout warning">
+          <div class="icon">⚠️</div>
+          <div>Any server or external service the workstation connects to that only supports 512 or 1024-bit DH will fail to negotiate TLS after this change. Carefully test all outbound connections — web services, APIs, database connections, directory services.</div>
+        </div>
+        <table class="policy-table">
+          <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>Diffie-Hellman ServerMinKeyBitLength</td><td>2048</td></tr>
+            <tr><td>Diffie-Hellman ClientMinKeyBitLength</td><td>2048</td></tr>
+          </tbody>
+        </table>
+        <div class="cmd-block">
+          <div class="cmd-label">PowerShell — Run on DC</div>
+          <pre><span class="v">$gpo</span>  = <span class="f">Get-GPO</span> -Name <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+<span class="v">$kxKey</span> = <span class="s">"HKLM\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\KeyExchangeAlgorithms\Diffie-Hellman"</span>
+
+<span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="v">$kxKey</span> -ValueName <span class="s">"ServerMinKeyBitLength"</span> -Type DWord -Value <span class="n">2048</span>
+<span class="f">Set-GPRegistryValue</span> -Guid <span class="v">$gpo.Id</span> -Key <span class="v">$kxKey</span> -ValueName <span class="s">"ClientMinKeyBitLength"</span> -Type DWord -Value <span class="n">2048</span>
+<span class="f">Write-Host</span> <span class="s">"✔ Group E applied."</span> -ForegroundColor Green</pre>
+        </div>
+        <div class="rollback">
+          <strong>🔄 Rollback</strong>
+          <code>Remove-GPRegistryValue -Guid $gpo.Id -Key $kxKey -ValueName "ServerMinKeyBitLength"</code><br>
+          <code>Remove-GPRegistryValue -Guid $gpo.Id -Key $kxKey -ValueName "ClientMinKeyBitLength"</code>
+        </div>
+        <div class="reboot-badge">⟳ Reboot workstation &amp; test after applying</div>
+      </div>
+    </div>
+
+    <!-- GROUP F -->
+    <div class="pg">
+      <div class="pg-header">
+        <div>
+          <div class="pg-title">Group F — Cipher Suite Order Policy</div>
+          <div class="pg-subtitle">Enforces strong AES-GCM cipher preference — highest compatibility risk</div>
+        </div>
+        <div style="margin-left:auto"><span class="pg-badge risk-high">Higher Risk</span></div>
+      </div>
+      <div class="pg-body">
+        <div class="callout danger">
+          <div class="icon">🚨</div>
+          <div><strong>Apply this group last and test most thoroughly.</strong> If the application or any of its dependencies hard-codes a cipher suite not in this list, TLS negotiation will fail entirely. Before applying, check if the application has its own TLS/cipher configuration file or registry settings.</div>
+        </div>
+        <table class="policy-table">
+          <thead><tr><th>#</th><th>Cipher Suite</th><th>Protocol</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>TLS_AES_256_GCM_SHA384</td><td>TLS 1.3</td></tr>
+            <tr><td>2</td><td>TLS_AES_128_GCM_SHA256</td><td>TLS 1.3</td></tr>
+            <tr><td>3</td><td>TLS_CHACHA20_POLY1305_SHA256</td><td>TLS 1.3</td></tr>
+            <tr><td>4</td><td>TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384</td><td>TLS 1.2</td></tr>
+            <tr><td>5</td><td>TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256</td><td>TLS 1.2</td></tr>
+            <tr><td>6</td><td>TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384</td><td>TLS 1.2</td></tr>
+            <tr><td>7</td><td>TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256</td><td>TLS 1.2</td></tr>
+            <tr><td>8</td><td>TLS_DHE_RSA_WITH_AES_256_GCM_SHA384</td><td>TLS 1.2</td></tr>
+            <tr><td>9</td><td>TLS_DHE_RSA_WITH_AES_128_GCM_SHA256</td><td>TLS 1.2</td></tr>
+          </tbody>
+        </table>
+        <div class="cmd-block">
+          <div class="cmd-label">PowerShell — Run on DC</div>
+          <pre><span class="v">$gpo</span>     = <span class="f">Get-GPO</span> -Name <span class="s">"FIPS-Exempt-Workstation-Policy"</span>
+<span class="v">$ciphers</span> = <span class="s">"TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,"</span> +
+           <span class="s">"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,"</span> +
+           <span class="s">"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,"</span> +
+           <span class="s">"TLS_DHE_RSA_WITH_AES_256_GCM_SHA384,TLS_DHE_RSA_WITH_AES_128_GCM_SHA256"</span>
+
+<span class="f">Set-GPRegistryValue</span> `
+    -Guid      <span class="v">$gpo.Id</span> `
+    -Key       <span class="s">"HKLM\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002"</span> `
+    -ValueName <span class="s">"Functions"</span> `
+    -Type      String `
+    -Value     <span class="v">$ciphers</span>
+
+<span class="f">Write-Host</span> <span class="s">"✔ Group F applied."</span> -ForegroundColor Green</pre>
+        </div>
+        <div class="rollback">
+          <strong>🔄 Rollback</strong>
+          <code>Remove-GPRegistryValue -Guid $gpo.Id -Key "HKLM\SOFTWARE\Policies\Microsoft\Cryptography\Configuration\SSL\00010002" -ValueName "Functions"</code>
+        </div>
+        <div class="reboot-badge">⟳ Reboot workstation &amp; test after applying</div>
+      </div>
+    </div>
+
+  </div><!-- /policy-groups -->
+
+  <div class="checkpoint" style="margin-top:32px">
+    <div class="ck-icon">🏁</div>
+    <div>
+      <div class="ck-title">All groups applied — final verification</div>
+      <div class="ck-body">
+        After all passing groups have been applied and the workstation is stable, run the following on the workstation to confirm the active configuration:<br><br>
+        <code>gpresult /h C:\GPOReport.html</code> — generates a full GPO report.<br>
+        <code>Get-TlsCipherSuite | Select-Object Name | Format-Table</code> — shows active cipher suites.<br>
+        <code>reg query "HKLM\SYSTEM\CurrentControlSet\Control\Lsa\FipsAlgorithmPolicy"</code> — confirm FIPS = 0.<br><br>
+        Document which groups were skipped (if any) as accepted risk exceptions and retain for your security audit records.
+      </div>
+    </div>
+  </div>
+
+</div><!-- /phase 4 -->
+
+</div><!-- /body-wrap -->
+
+<footer>Domain Join &amp; GPO Hardening Guide &nbsp;·&nbsp; Requires RSAT / GPMC on DC &nbsp;·&nbsp; Reboot required after each group</footer>
+
+<script>
+function switchTab(btn, panelId) {
+  const wrap = btn.closest('.tabs-wrap');
+  wrap.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  wrap.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(panelId).classList.add('active');
+}
+</script>
+</body>
+</html>
