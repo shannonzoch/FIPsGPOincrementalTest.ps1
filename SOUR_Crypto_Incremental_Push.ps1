@@ -1,11 +1,33 @@
 ###############################################################################
 #  SOUR_Crypto_Incremental_Push.ps1
 #
-#  VERSION : 1.2.0
+#  VERSION : 1.3.0
 #
 # ─────────────────────────────────────────────────────────────────────────────
 #  CHANGE LOG
 # ─────────────────────────────────────────────────────────────────────────────
+#  v1.3.0  2026-04-22
+#    - Added [I] Import Local Test Results menu option.
+#      Reads crypto_snapshot.json from SOUR_Crypto_Local_Incremental.ps1
+#      off the workstation, queries the current live registry state via
+#      Invoke-Command, diffs the two to determine exactly which settings
+#      were applied and kept during local testing, then applies only those
+#      settings to the SOUR OU GPO and pushes via Invoke-GPUpdate.
+#      Workflow:
+#        1. User provides the path to crypto_snapshot.json on the workstation.
+#        2. Script reads the file remotely via Invoke-Command.
+#        3. Script queries all 47 tracked registry values live on the
+#           workstation and compares each against the snapshot baseline.
+#        4. Values that changed from the snapshot are collected as the
+#           diff — these are the settings that survived local testing.
+#        5. A preview table is displayed before any GPO changes are made.
+#        6. User confirms, then each diff entry is written to the GPO via
+#           Set-GPRegistryValue using the live value and type from the
+#           workstation.
+#        7. Invoke-GPUpdate pushes the updated GPO to the workstation.
+#      Settings that were unchanged or rolled back during local testing
+#      are skipped automatically — they are not written to the GPO.
+#
 #  v1.2.0  2026-04-22
 #    - Fixed 7 incorrect Enabled values across Groups 1, 2, 7, and 8.
 #      SCHANNEL Ciphers, Hashes, and KeyExchangeAlgorithms nodes require
@@ -593,6 +615,284 @@ function Verify-AllLive {
 
 
 ###############################################################################
+#  IMPORT LOCAL TEST RESULTS
+#  Reads crypto_snapshot.json from the workstation, diffs it against the
+#  current live registry, and applies only the settings that changed
+#  (i.e. survived local testing) to the SOUR OU GPO.
+###############################################################################
+function Import-LocalTestResults {
+
+    Write-Host ""
+    Write-Host "══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  [I] Import Local Test Results" -ForegroundColor Cyan
+    Write-Host "  Source: SOUR_Crypto_Local_Incremental.ps1 / crypto_snapshot.json" -ForegroundColor Cyan
+    Write-Host "══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  HOW THIS WORKS:" -ForegroundColor Gray
+    Write-Host "    1. Reads the pre-test snapshot from the workstation." -ForegroundColor Gray
+    Write-Host "    2. Queries the current live registry on the workstation." -ForegroundColor Gray
+    Write-Host "    3. Diffs the two to find what changed (i.e. what survived testing)." -ForegroundColor Gray
+    Write-Host "    4. Applies only those settings to the SOUR OU GPO." -ForegroundColor Gray
+    Write-Host "    Settings rolled back or never applied are automatically skipped." -ForegroundColor Gray
+    Write-Host ""
+
+    # ── Step 1: Get the path to the snapshot file on the workstation ──────────
+    Write-Host "  Enter the full path to crypto_snapshot.json ON THE WORKSTATION." -ForegroundColor Yellow
+    Write-Host "  This is the folder where SOUR_Crypto_Local_Incremental.ps1 was run." -ForegroundColor DarkGray
+    Write-Host "  Example: C:\Scripts\crypto_snapshot.json" -ForegroundColor DarkGray
+    Write-Host ""
+    $remotePath = (Read-Host "  Remote path").Trim().Trim('"')
+
+    if ([string]::IsNullOrWhiteSpace($remotePath)) {
+        Write-Host "  No path provided. Cancelled." -ForegroundColor Red
+        return
+    }
+
+    # ── Step 2: Read snapshot from the workstation via Invoke-Command ─────────
+    Write-Host ""
+    Write-Host "  Reading snapshot from $SOURHost ..." -ForegroundColor Cyan
+
+    try {
+        $snapshotJson = Invoke-Command -ComputerName $SOURHost -ErrorAction Stop -ScriptBlock {
+            param($p)
+            if (-not (Test-Path $p)) { throw "File not found at path: $p" }
+            Get-Content -Path $p -Raw
+        } -ArgumentList $remotePath
+    } catch {
+        Write-Host "  ERROR reading snapshot: $_" -ForegroundColor Red
+        return
+    }
+
+    try {
+        $snapshot = $snapshotJson | ConvertFrom-Json
+    } catch {
+        Write-Host "  ERROR parsing snapshot JSON: $_" -ForegroundColor Red
+        return
+    }
+
+    Write-Host "  Snapshot loaded." -ForegroundColor Green
+    Write-Host "  Taken   : $($snapshot.Timestamp)" -ForegroundColor Gray
+    Write-Host "  Computer: $($snapshot.ComputerName)" -ForegroundColor Gray
+    Write-Host "  Entries : $($snapshot.EntryCount)" -ForegroundColor Gray
+
+    # Warn if the snapshot was taken from a different computer
+    if ($snapshot.ComputerName -ne $SOURHost -and
+        $snapshot.ComputerName -ne $SOURHost.Split('.')[0]) {
+        Write-Host ""
+        Write-Host "  WARNING: Snapshot ComputerName ($($snapshot.ComputerName)) does not" -ForegroundColor Yellow
+        Write-Host "  match SOURHost ($SOURHost). Verify you are using the correct file." -ForegroundColor Yellow
+        $cont = Read-Host "  Continue anyway? (Y/N)"
+        if ($cont -notmatch "^[Yy]$") { return }
+    }
+
+    # ── Step 3: Query all tracked values live on the workstation ──────────────
+    Write-Host ""
+    Write-Host "  Querying live registry on $SOURHost for all $($snapshot.EntryCount) tracked entries..." -ForegroundColor Cyan
+
+    $queryList = @($snapshot.Entries | Select-Object Path, Name)
+
+    try {
+        $liveValues = Invoke-Command -ComputerName $SOURHost -ErrorAction Stop -ScriptBlock {
+            param($queries)
+            $out = @()
+            foreach ($q in $queries) {
+                $path      = $q.Path
+                $name      = $q.Name
+                $keyExists = Test-Path $path
+                $curVal    = $null
+                $curType   = $null
+                $valExists = $false
+
+                if ($keyExists) {
+                    $item = Get-Item -Path $path -ErrorAction SilentlyContinue
+                    if ($item) {
+                        $raw = $item.GetValue(
+                            $name, $null,
+                            [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+                        if ($null -ne $raw) {
+                            $valExists = $true
+                            $curVal    = $raw
+                            try   { $curType = $item.GetValueKind($name).ToString() }
+                            catch { $curType = "DWord" }
+                        }
+                    }
+                }
+
+                $out += [PSCustomObject]@{
+                    Path      = $path
+                    Name      = $name
+                    KeyExists = $keyExists
+                    ValExists = $valExists
+                    CurValue  = $curVal
+                    CurType   = $curType
+                }
+            }
+            return $out
+        } -ArgumentList (,$queryList)
+    } catch {
+        Write-Host "  ERROR querying live registry: $_" -ForegroundColor Red
+        return
+    }
+
+    Write-Host "  Live registry query complete." -ForegroundColor Green
+
+    # ── Step 4: Build diff ────────────────────────────────────────────────────
+    Write-Host "  Building diff ..." -ForegroundColor Gray
+
+    $toApply = [System.Collections.Generic.List[object]]::new()
+    $skipped = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($entry in $snapshot.Entries) {
+
+        # Find matching live result
+        $live = $liveValues |
+                Where-Object { $_.Path -eq $entry.Path -and $_.Name -eq $entry.Name } |
+                Select-Object -First 1
+
+        $snapValExists = [bool]$entry.ValueExistedBefore
+        $snapVal       = $entry.OriginalValue
+        $liveValExists = $live -and [bool]$live.ValExists
+        $liveVal       = if ($live) { $live.CurValue } else { $null }
+        $liveType      = if ($live) { $live.CurType }  else { "DWord" }
+
+        $changed = $false
+        $reason  = ""
+
+        if (-not $snapValExists -and $liveValExists) {
+            # Did not exist before — was added during testing and kept
+            $changed = $true
+            $reason  = "Added during test (was absent before)"
+
+        } elseif ($snapValExists -and $liveValExists -and
+                  ("$snapVal" -ne "$liveVal")) {
+            # Existed with a different value — was modified during testing
+            $changed = $true
+            $reason  = "Changed: $snapVal → $liveVal"
+
+        } elseif ($snapValExists -and -not $liveValExists) {
+            # Existed before but now absent — removed during testing
+            # Removals are not pushed to GPO (no analogue in Set-GPRegistryValue)
+            $reason = "SKIP — was removed during test (not pushed to GPO)"
+
+        } else {
+            # No change — either never applied or rolled back
+            $reason = "Unchanged / rolled back"
+        }
+
+        if ($changed) {
+            $toApply.Add([PSCustomObject]@{
+                Path    = $entry.Path
+                Name    = $entry.Name
+                Value   = $liveVal
+                Type    = if ($liveType) { $liveType } else { "DWord" }
+                Reason  = $reason
+            })
+        } else {
+            $skipped.Add([PSCustomObject]@{
+                Path   = $entry.Path
+                Name   = $entry.Name
+                Reason = $reason
+            })
+        }
+    }
+
+    # ── Step 5: Preview ───────────────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+    Write-Host "  DIFF RESULTS" -ForegroundColor White
+    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+
+    if ($toApply.Count -eq 0) {
+        Write-Host ""
+        Write-Host "  No differences found between the snapshot and the current" -ForegroundColor Yellow
+        Write-Host "  live registry. Either no groups were applied during local" -ForegroundColor Yellow
+        Write-Host "  testing, or all were rolled back. Nothing will be pushed." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ""
+    Write-Host "  Will be APPLIED to GPO '$GPOName' ($($toApply.Count) settings):" -ForegroundColor Green
+    $previewResults = foreach ($item in $toApply) {
+        # Use just the last key segment for readability in the table
+        $keySegment = ($item.Path -split '\\')[-1]
+        [PSCustomObject]@{
+            KeySegment = $keySegment
+            ValueName  = $item.Name
+            Value      = $item.Value
+            Type       = $item.Type
+            Reason     = $item.Reason
+        }
+    }
+    $previewResults | Format-Table -AutoSize
+
+    Write-Host "  Will be SKIPPED ($($skipped.Count) settings — unchanged or rolled back during test):" -ForegroundColor DarkGray
+    Write-Host ""
+
+    # ── Step 6: Confirm and apply ─────────────────────────────────────────────
+    $confirm = Read-Host "  Apply these $($toApply.Count) settings to GPO '$GPOName'? (Y/N)"
+    if ($confirm -notmatch "^[Yy]$") {
+        Write-Host "  Cancelled. No changes made to GPO." -ForegroundColor DarkGray
+        return
+    }
+
+    Write-Host ""
+    Write-Host "  Writing settings to GPO..." -ForegroundColor Cyan
+
+    $typeMap = @{
+        DWord        = "DWord";   QWord        = "QWord"
+        String       = "String";  ExpandString = "ExpandString"
+        MultiString  = "MultiString"; Binary   = "Binary"
+    }
+
+    $applied = 0; $errors = 0
+
+    foreach ($item in $toApply) {
+        # Convert PowerShell registry path (HKLM:\) to GPO format (HKLM\)
+        $gpoKey = $item.Path `
+                  -replace '^HKLM:\\', 'HKLM\' `
+                  -replace '^HKCU:\\', 'HKCU\'
+        $psType = if ($typeMap.ContainsKey($item.Type)) { $typeMap[$item.Type] } else { "DWord" }
+
+        try {
+            Set-GPRegistryValue `
+                -Name      $GPOName `
+                -Key       $gpoKey `
+                -ValueName $item.Name `
+                -Type      $psType `
+                -Value     $item.Value | Out-Null
+            Write-Host "   SET  [$($item.Name) = $($item.Value) ($psType)]  ...$(($gpoKey -split '\\')[-1])" -ForegroundColor Gray
+            $applied++
+        } catch {
+            Write-Host "   ERROR  [$($item.Name)]  $gpoKey  — $_" -ForegroundColor Red
+            $errors++
+        }
+    }
+
+    # ── Step 7: Push ──────────────────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "  ─────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  Applied : $applied settings to GPO" -ForegroundColor $(if ($errors -gt 0) {"Yellow"} else {"Green"})
+    if ($errors -gt 0) {
+        Write-Host "  Errors  : $errors  — check output above" -ForegroundColor Red
+    }
+    Write-Host ""
+    Write-Host "  Pushing GPO update to $SOURHost ..." -ForegroundColor Cyan
+
+    try {
+        Invoke-GPUpdate -Computer $SOURHost -Force -RandomDelayInMinutes 0 -ErrorAction Stop
+        Write-Host "  GPO update delivered to $SOURHost." -ForegroundColor Green
+    } catch {
+        Write-Warning "  Invoke-GPUpdate failed: $_ — run gpupdate /force manually on the workstation."
+    }
+
+    Write-Host ""
+    Write-Host "  *** Reboot the workstation before testing." -ForegroundColor Yellow
+    Write-Host "  *** SCHANNEL changes are not active until after restart." -ForegroundColor Yellow
+    Write-Host "  ─────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+}
+
+
+###############################################################################
 #  INTERACTIVE MENU
 ###############################################################################
 function Show-Menu {
@@ -611,6 +911,10 @@ function Show-Menu {
     Write-Host "  [8]  Key exchange + DH 2048-bit    [R8]  Rollback Group 8"
     Write-Host "  [9]  .NET SchUseStrongCrypto        [R9]  Rollback Group 9"
     Write-Host "  [10] Cipher suite order            [R10] Rollback Group 10"
+    Write-Host ""
+    Write-Host "  [I]  Import results from SOUR_Crypto_Local_Incremental.ps1" -ForegroundColor Green
+    Write-Host "       (reads crypto_snapshot.json, diffs against live registry," -ForegroundColor DarkGray
+    Write-Host "        applies only settings that survived local testing to GPO)" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  [V]  Verify live registry on workstation"
     Write-Host "  [Q]  Quit"
@@ -652,7 +956,8 @@ do {
         "R8"  { Rollback-Group8  }
         "R9"  { Rollback-Group9  }
         "R10" { Rollback-Group10 }
-        "V"   { Verify-AllLive   }
+        "V"   { Verify-AllLive          }
+        "I"   { Import-LocalTestResults }
         "Q"   { Write-Host "  Exiting." -ForegroundColor DarkGray }
         default { Write-Host "  Invalid selection." -ForegroundColor Red }
     }
