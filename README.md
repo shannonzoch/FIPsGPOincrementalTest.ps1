@@ -120,7 +120,7 @@ A targeted supplemental script that adds only the registry entries identified as
 ### `Apply_Local_TLS_Security_Policy.ps1`
 
 **Purpose**
-A complete single-run script for non-domain-joined workstations that applies all strong-cryptography settings in one unattended pass: FIPS disablement, protocol configuration, cipher hardening, hash configuration, key exchange settings, .NET strong crypto for all framework versions and bitness paths, and cipher suite order. Uses `secedit` in addition to direct registry writes so all changes are reflected correctly in `secpol.msc` and survive subsequent policy refreshes. Prints a numbered progress section for each of the nine setting areas as it runs. Prompts for a reboot at the end with a 10-second countdown. Requires an elevated PowerShell session on the workstation.
+A complete single-run script for non-domain-joined workstations that applies all strong-cryptography settings in one unattended pass: FIPS disablement, protocol configuration, cipher hardening, hash configuration, key exchange settings, .NET strong crypto for all framework versions and bitness paths, and cipher suite order. Uses `secedit` in addition to direct registry writes so all changes are reflected correctly in `secpol.msc` and survive subsequent policy refreshes. **Note:** this script pre-dates the discovery of the SHA256 and PKCS incompatibilities and includes those settings. Use `Local_Policy_Set_noFips.ps1` instead if the SOUR workstation software must remain functional.
 
 **User Guide**
 1. Confirm the workstation is standalone (not domain-joined). For domain-joined workstations use the DC scripts instead.
@@ -132,6 +132,24 @@ A complete single-run script for non-domain-joined workstations that applies all
 7. At the end, a reboot prompt appears with a 10-second countdown. Enter `N` to cancel if you need to review the output first, or allow the countdown to complete.
 8. After the reboot, open `secpol.msc` and navigate to **Security Settings > Local Policies > Security Options** to confirm FIPS shows as Disabled.
 9. Test all software and network connectivity after rebooting as this script applies all settings at once with no incremental option.
+
+---
+
+### `Local_Policy_Set_noFips.ps1` — *v1.0.0* ⭐ Recommended single-run apply
+
+**Purpose**
+Applies all SOUR-compatible strong-cryptography settings directly to the local registry in a single unattended run with no menu, no GPO, and no LGPO involvement. This is the correct replacement for `Apply_Local_TLS_Security_Policy.ps1` — it applies identical coverage but with the three confirmed incompatible settings excluded and all `0xffffffff` bitmask values corrected. Equivalent to running all ten groups of `SOUR_Crypto_Local_Incremental.ps1` in sequence plus FIPS disablement. Covers eleven numbered steps: FIPS disabled via registry and `secedit`; AES 128/256 enabled; SHA384 enabled; SSL 2/3 and TLS 1.0/1.1 disabled with both `Enabled=0` and `DisabledByDefault=1`; TLS 1.2 and TLS 1.3 explicitly enabled; RC4, RC2, DES, 3DES, and NULL ciphers disabled; MD5 disabled and SHA/SHA256/SHA512 enabled; Diffie-Hellman and ECDH enabled with 2048-bit minimum key size; .NET `SchUseStrongCrypto` for all framework versions and bitness paths; and cipher suite order set to nine strong AES-GCM suites. Displays a live verification report after applying all settings. Prompts for a reboot on completion. Intentionally omits FIPS enforcement, PKCS key exchange, and the SHA256 SCHANNEL hash registry key — all three confirmed to cause the "Security Service is unavailable" error in the SOUR workstation software.
+
+**User Guide**
+1. Copy `Local_Policy_Set_noFips.ps1` to the workstation.
+2. Open an elevated PowerShell session and navigate to the script folder.
+3. If required: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
+4. Run the script: `.\Local_Policy_Set_noFips.ps1`
+5. The script works through eleven numbered sections, printing each registry value as it is set.
+6. After all settings are applied a live verification report is displayed automatically — review it to confirm all values are present before rebooting.
+7. When prompted to restart, enter `Y`. Allow the 10-second countdown or press Ctrl+C to cancel and reboot manually later.
+8. After the workstation restarts, run `.\Local_Show_Crypto_Registry.ps1` to confirm the live state matches expectations.
+9. Test the problem software. If it still fails, use `SOUR_Crypto_Local_Incremental.ps1` to isolate the specific remaining incompatible setting.
 
 ---
 
@@ -172,6 +190,22 @@ Per-group rollbacks `[R1]` through `[R10]` remain available for finer-grained co
 15. Review the per-entry output to confirm each setting is being handled correctly (restored, removed, deleted, or skipped).
 16. When prompted to reboot, enter `Y`.
 17. After the reboot, enter `V` in the menu to confirm the registry matches the original snapshot.
+
+---
+
+### `Local_Show_Crypto_Registry.ps1` — *v1.0.0* *(formerly `Show_Crypto_Registry.ps1`)*
+
+**Purpose**
+A read-only diagnostic script that displays the current local registry state of every cryptography setting managed by the SOUR hardening scripts. Makes no changes to the registry and is safe to run at any time, including before and after applying any other script in this collection. Covers nine sections: AES ciphers with expected value `0xFFFFFFFF`; weak ciphers (RC4, RC2, DES, 3DES, NULL) expected at `0`; all protocol `Enabled` and `DisabledByDefault` values for SSL 2/3 and TLS 1.0 through 1.3; hash algorithm state including a note for the intentionally omitted SHA256 key; key exchange algorithms including DH minimum key sizes and a note for the intentionally omitted PKCS key; .NET `SchUseStrongCrypto` across all framework versions and bitness paths; configured cipher suite order from the GPO policy registry path; live active TLS cipher suites from `Get-TlsCipherSuite` showing what Windows will actually negotiate; and FIPS policy state shown in green if disabled or yellow if enabled. Each section displays a status indicator — `✔` if the value matches the expected hardened state, `✘` if present but incorrect, or `—` if absent meaning the Windows OS default applies. The three intentional omissions are noted with explanations in the summary legend at the bottom.
+
+**User Guide**
+1. Copy `Local_Show_Crypto_Registry.ps1` to the workstation.
+2. Open an elevated PowerShell session and navigate to the script folder.
+3. If required: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
+4. Run the script: `.\Local_Show_Crypto_Registry.ps1`
+5. Review each section in order. The `✔` / `✘` / `—` status column in each table shows at a glance which settings are in the correct hardened state.
+6. Use this script before applying any other script to record the baseline, after applying scripts to confirm changes took effect, and after a reboot to verify SCHANNEL values are active.
+7. The script can also be used to quickly check FIPS state — Section 9 shows the current value in green (disabled, compatible) or yellow (enabled, will break software).
 
 ---
 
@@ -228,12 +262,14 @@ An interactive menu-driven script that re-applies DISA STIG settings for Windows
 
 ---
 
-### `SOUR_Crypto_Incremental_Push.ps1` — *v1.2.0*
+### `SOUR_Crypto_Incremental_Push.ps1` — *v1.3.0*
 
 **Purpose**
-An interactive menu-driven script that pushes strong-cryptography GPO registry settings to the SOUR workstation OU GPO one group at a time from the Domain Controller. Accepts `-GPOName` and `-SOURHost` as mandatory parameters at invocation; PowerShell will prompt interactively for either if omitted. Uses `Set-GPRegistryValue` to write each setting directly into the GPO's `registry.pol` without requiring GPME or the Group Policy Management Editor to be open, then calls `Invoke-GPUpdate` to force the workstation to pull the change immediately without waiting for the standard 90-minute refresh interval. The ten groups are identical in content to those in the local incremental script. Each group has a corresponding rollback using `Remove-GPRegistryValue`. A `[V]` verify option runs `Invoke-Command` against the workstation to display the live registry state after a reboot, confirming the GPO was applied before testing begins. Correctly uses `0xffffffff` for all Cipher, Hash, and KeyExchangeAlgorithm Enabled values. Intentionally omits FIPS, PKCS, and the SHA256 SCHANNEL hash registry key.
+An interactive menu-driven script that pushes strong-cryptography GPO registry settings to the SOUR workstation OU GPO one group at a time from the Domain Controller. Accepts `-GPOName` and `-SOURHost` as mandatory parameters at invocation; PowerShell will prompt interactively for either if omitted. Uses `Set-GPRegistryValue` to write each setting directly into the GPO's `registry.pol` without requiring GPME or the Group Policy Management Editor to be open, then calls `Invoke-GPUpdate` to force the workstation to pull the change immediately without waiting for the standard 90-minute refresh interval. The ten groups are identical in content to those in the local incremental script. Each group has a corresponding rollback using `Remove-GPRegistryValue`. A `[V]` verify option runs `Invoke-Command` against the workstation to display the live registry state after a reboot. A `[I]` import option reads `crypto_snapshot.json` from `SOUR_Crypto_Local_Incremental.ps1` off the workstation, diffs it against the current live registry to determine exactly which settings survived local testing, and applies only those settings to the GPO automatically. Correctly uses `0xffffffff` for all Cipher, Hash, and KeyExchangeAlgorithm Enabled values. Intentionally omits FIPS, PKCS, and the SHA256 SCHANNEL hash registry key.
 
 **User Guide**
+
+*Standard incremental workflow:*
 1. Log on to the Domain Controller with a Domain Admin account or an account with delegated GPO editing rights.
 2. Open an elevated PowerShell session.
 3. Confirm the GroupPolicy module is available: `Get-Module -ListAvailable GroupPolicy`
@@ -242,7 +278,7 @@ An interactive menu-driven script that pushes strong-cryptography GPO registry s
 6. Navigate to the folder containing the script: `cd C:\Path\To\Scripts`
 7. Run the script with parameters:
    `.\SOUR_Crypto_Incremental_Push.ps1 -GPOName "SOUR-Workstation-Policy" -SOURHost "SOUR-WORKSTATION"`
-8. The menu appears showing all ten groups with apply and rollback options, plus the `[V]` verify option.
+8. The menu appears showing all ten groups with apply and rollback options, plus `[V]` verify and `[I]` import.
 9. Enter `1` to apply Group 1. The script writes to the GPO and immediately calls `Invoke-GPUpdate` to push to the workstation.
 10. Reboot the workstation: from the DC run `Restart-Computer -ComputerName SOUR-WORKSTATION -Force`
 11. After the workstation restarts, return to the script and enter `V` to confirm the live registry on the workstation reflects the change.
@@ -250,6 +286,15 @@ An interactive menu-driven script that pushes strong-cryptography GPO registry s
 13. If the software works, return to the script and enter `2` to apply the next group.
 14. If a group breaks the software, enter `R` followed by the group number (e.g. `R6`) to remove those settings from the GPO, push the removal with `Invoke-GPUpdate`, reboot the workstation, and confirm recovery.
 15. Continue through all ten groups. Document any skipped groups as known incompatibilities.
+
+*Import from local test results workflow (use after completing SOUR_Crypto_Local_Incremental.ps1 testing):*
+1. Complete local incremental testing on the workstation using `SOUR_Crypto_Local_Incremental.ps1`. Ensure a snapshot was taken with `[S]` before testing began and that `crypto_snapshot.json` is still present in the script folder on the workstation.
+2. Run `SOUR_Crypto_Incremental_Push.ps1` on the DC as above and enter `I` from the menu.
+3. When prompted, enter the full path to `crypto_snapshot.json` on the workstation (e.g. `C:\Scripts\crypto_snapshot.json`). The script reads this file remotely via `Invoke-Command`.
+4. The script queries all 47 tracked registry values live from the workstation and compares each against the snapshot baseline to determine what changed.
+5. A preview table is displayed showing every setting that will be written to the GPO, with the reason each was selected. Review it carefully.
+6. Enter `Y` to confirm. Each diff entry is written to the GPO via `Set-GPRegistryValue` and `Invoke-GPUpdate` pushes the update to the workstation.
+7. Reboot the workstation and enter `V` to verify the live registry matches what was applied.
 
 ---
 
